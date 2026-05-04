@@ -4,7 +4,7 @@
             "outputFile": "com.example.sklad.app-mergeDebugResources-60:/values-v24/values-v24.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\timof\\.gradle\\caches\\9.0.0\\transforms\\ba3fb5f4af453dc428467fedda6a5162\\transformed\\appcompat-1.6.1\\res\\values-v24\\values-v24.xml",
+                    "source": "C:\\Users\\timof\\.gradle\\caches\\9.4.1\\transforms\\730843ef6a2fad25cc5e0757550bfe2a\\transformed\\appcompat-1.6.1\\res\\values-v24\\values-v24.xml",
                     "from": {
                         "startLines": "2,3",
                         "startColumns": "4,4",
