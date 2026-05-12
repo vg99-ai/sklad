@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -25,11 +26,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.sklad.data.local.ProductEntity
 import com.example.sklad.data.local.SaleEntity
+import com.example.sklad.data.local.StockEntity
 import com.example.sklad.ui.viewmodel.MainViewModel
 
 private enum class AppScreen(val title: String) {
@@ -83,22 +86,30 @@ fun AppRoot(vm: MainViewModel) {
 
                     AppScreen.Sales -> SalesScreen(
                         products = products,
-                        onSale = { product, quantity ->
-                            val location = locations.firstOrNull() ?: return@SalesScreen
-                            val amount = quantity * product.retailPrice
-                            vm.sale(
-                                SaleEntity(
-                                    productId = product.id,
-                                    locationId = location.id,
-                                    quantity = quantity,
-                                    salePrice = product.retailPrice,
-                                    date = System.currentTimeMillis(),
-                                    customer = "",
-                                    comment = "Продажа из экрана продажи",
-                                    amount = amount,
-                                    profit = amount - (quantity * product.purchasePrice)
+                        stocks = stocks,
+                        onCompleteSale = { saleRows ->
+                            saleRows.forEach { row ->
+                                val stockLocation = stocks
+                                    .filter { it.productId == row.product.id }
+                                    .sortedByDescending { it.quantity }
+                                    .firstOrNull()
+                                    ?: return@forEach
+
+                                val amount = row.quantity * row.product.retailPrice
+                                vm.sale(
+                                    SaleEntity(
+                                        productId = row.product.id,
+                                        locationId = stockLocation.locationId,
+                                        quantity = row.quantity,
+                                        salePrice = row.product.retailPrice,
+                                        date = System.currentTimeMillis(),
+                                        customer = "",
+                                        comment = "Продажа из кассы",
+                                        amount = amount,
+                                        profit = amount - (row.quantity * row.product.purchasePrice)
+                                    )
                                 )
-                            )
+                            }
                         }
                     )
 
@@ -191,10 +202,14 @@ private fun ProductsScreen(products: List<ProductEntity>, onAdd: (ProductEntity)
 }
 
 @Composable
-private fun SalesScreen(products: List<ProductEntity>, onSale: (ProductEntity, Double) -> Unit) {
+private fun SalesScreen(
+    products: List<ProductEntity>,
+    stocks: List<StockEntity>,
+    onCompleteSale: (List<CartRow>) -> Unit
+) {
     var query by remember { mutableStateOf("") }
-    var selectedProduct by remember { mutableStateOf<ProductEntity?>(null) }
-    var quantityText by remember { mutableStateOf("1") }
+    val cart = remember { mutableStateListOf<CartRow>() }
+    var message by remember { mutableStateOf<String?>(null) }
 
     val filtered = remember(products, query) {
         if (query.isBlank()) products
@@ -205,8 +220,11 @@ private fun SalesScreen(products: List<ProductEntity>, onSale: (ProductEntity, D
         }
     }
 
+    val totalQty = cart.sumOf { it.quantity }
+    val totalAmount = cart.sumOf { it.quantity * it.product.retailPrice }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Экран продажи", style = MaterialTheme.typography.headlineSmall)
+        Text("Экран продажи (Касса)", style = MaterialTheme.typography.headlineSmall)
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -214,8 +232,8 @@ private fun SalesScreen(products: List<ProductEntity>, onSale: (ProductEntity, D
             modifier = Modifier.fillMaxWidth()
         )
 
-        Text("Список найденных товаров", fontWeight = FontWeight.SemiBold)
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Найденные товары", fontWeight = FontWeight.SemiBold)
+        LazyColumn(modifier = Modifier.height(180.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(filtered) { product ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -227,42 +245,82 @@ private fun SalesScreen(products: List<ProductEntity>, onSale: (ProductEntity, D
                         Column {
                             Text(product.name, fontWeight = FontWeight.Bold)
                             Text("Артикул: ${product.article}")
-                            Text("Цена: ${product.retailPrice} RUB")
+                            Text("Штрихкод: ${product.barcode}")
                         }
-                        Button(onClick = {
-                            selectedProduct = product
-                            quantityText = "1"
-                        }) { Text("Продать") }
+                        Button(onClick = { addToCart(cart, product) }) { Text("В корзину") }
                     }
                 }
             }
         }
-    }
 
-    if (selectedProduct != null) {
-        AlertDialog(
-            onDismissRequest = { selectedProduct = null },
-            title = { Text("Количество") },
-            text = {
-                OutlinedTextField(
-                    value = quantityText,
-                    onValueChange = { quantityText = it },
-                    label = { Text("Введите количество") }
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val quantity = quantityText.toDoubleOrNull() ?: 0.0
-                    val product = selectedProduct
-                    if (product != null && quantity > 0) onSale(product, quantity)
-                    selectedProduct = null
-                }) { Text("Продать") }
-            },
-            dismissButton = {
-                TextButton(onClick = { selectedProduct = null }) { Text("Отмена") }
+        Text("Корзина", fontWeight = FontWeight.SemiBold)
+        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            itemsIndexed(cart, key = { _, row -> row.product.id }) { index, row ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(row.product.name, fontWeight = FontWeight.Bold)
+                        Text("Кол-во: ${row.quantity}")
+                        Text("Цена за шт: ${row.product.retailPrice} RUB")
+                        Text("Сумма: ${row.quantity * row.product.retailPrice} RUB")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { cart[index] = row.copy(quantity = row.quantity + 1.0) }) { Text("+") }
+                            Button(onClick = {
+                                val newQty = row.quantity - 1.0
+                                if (newQty <= 0.0) cart.removeAt(index) else cart[index] = row.copy(quantity = newQty)
+                            }) { Text("-") }
+                            Button(onClick = { cart.removeAt(index) }) { Text("Удалить") }
+                        }
+                    }
+                }
             }
-        )
+        }
+
+        Text("Итого товаров: $totalQty")
+        Text("Итого сумма: $totalAmount RUB")
+
+        Button(
+            onClick = {
+                val errors = validateCartAgainstStocks(cart, stocks)
+                if (errors.isNotEmpty()) {
+                    message = errors.first()
+                    return@Button
+                }
+                onCompleteSale(cart.toList())
+                cart.clear()
+                message = "Продажа завершена"
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Завершить продажу") }
+
+        if (message != null) {
+            Text(message!!)
+        }
     }
+}
+
+data class CartRow(val product: ProductEntity, val quantity: Double)
+
+private fun addToCart(cart: SnapshotStateList<CartRow>, product: ProductEntity) {
+    val index = cart.indexOfFirst { it.product.id == product.id }
+    if (index >= 0) {
+        val row = cart[index]
+        cart[index] = row.copy(quantity = row.quantity + 1.0)
+    } else {
+        cart.add(CartRow(product = product, quantity = 1.0))
+    }
+}
+
+private fun validateCartAgainstStocks(cart: List<CartRow>, stocks: List<StockEntity>): List<String> {
+    val errors = mutableListOf<String>()
+    cart.forEach { row ->
+        val available = stocks.filter { it.productId == row.product.id }.sumOf { it.quantity }
+        if (available <= 0.0) {
+            errors.add("${row.product.name}: товара нет в остатках")
+        } else if (available < row.quantity) {
+            errors.add("${row.product.name}: остаток $available меньше количества ${row.quantity}")
+        }
+    }
+    return errors
 }
 
 @Composable
